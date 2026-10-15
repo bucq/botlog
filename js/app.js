@@ -48,8 +48,10 @@
   function save() {
     try {
       localStorage.setItem(storageKey, JSON.stringify(state));
+      return true;
     } catch {
       toast('保存に失敗しました（ストレージ容量またはプライベートモード）');
+      return false;
     }
   }
 
@@ -833,10 +835,14 @@
     const ids = new Set(state.records.map(r => r.id));
     state.records.push(...guest.records.filter(r => !ids.has(r.id)).map(r => ({ ...r, synced: false })));
     state.settings.goals = { ...guest.settings.goals, ...state.settings.goals };
-    save();
-    // 取り込んだ分はゲスト側から消し、二重に取り込まれないようにする
-    try { localStorage.setItem(GUEST_KEY, JSON.stringify({ ...guest, records: [] })); } catch { /* ignore */ }
     renderAll();
+    // アカウント側への保存が確認できたときだけゲスト側を空にする（二重取り込み防止）。
+    // 念のため元のゲストデータは別キーに残しておく
+    if (!save()) return;
+    try {
+      localStorage.setItem(`${GUEST_KEY}:imported-backup`, JSON.stringify(guest));
+      localStorage.setItem(GUEST_KEY, JSON.stringify({ ...guest, records: [] }));
+    } catch { /* 容量不足ならゲスト側をそのまま残す */ }
   }
 
   async function applyRemoteGoals() {
