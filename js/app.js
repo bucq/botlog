@@ -436,12 +436,11 @@
 
   // ダイヤルのドラッグ操作
   //  - 外側のリングから始めた場合: 円に沿ってなぞると回る（6°で ±1、時計回りで増加）
-  //  - 中央の数字から始めた場合: 上下スワイプ（上で増加）
+  //  - 中央の数字から始めた場合: ドラッグしても何もしない（タップのみ）
   //  - 動かさずに離した場合: 数字を直接入力
   function setupDialDrag() {
     const dial = $('.dial');
     const input = $('#input-value');
-    const SLIDE_PX = 14; // 上下スワイプで ±1 に必要な距離
     const DEG = 6;
     let drag = null;
     let suppressClick = false;
@@ -461,11 +460,10 @@
       drag = {
         id: e.pointerId,
         c,
-        kind: dist > (rect.width / 2) * 0.6 ? 'rotate' : 'slide',
+        rotate: dist > (rect.width / 2) * 0.6,
         startX: e.clientX,
         startY: e.clientY,
         lastAngle: angleAt(e, c),
-        lastY: e.clientY,
         acc: 0,
         moved: false,
       };
@@ -478,11 +476,12 @@
       if (!drag || e.pointerId !== drag.id) return;
       if (!drag.moved) {
         if (Math.hypot(e.clientX - drag.startX, e.clientY - drag.startY) < 6) return;
-        drag.moved = true;
+        drag.moved = true; // 中央でも動かしたらタップ扱いにしない
+        if (!drag.rotate) return;
         dial.classList.add('dragging');
         input.blur();
       }
-      if (drag.kind === 'rotate') {
+      if (drag.rotate) {
         const a = angleAt(e, drag.c);
         let d = a - drag.lastAngle;
         if (d > 180) d -= 360;
@@ -493,12 +492,6 @@
         while (drag.acc >= DEG - 0.01) { step(1); drag.acc -= DEG; }
         while (drag.acc <= -DEG + 0.01) { step(-1); drag.acc += DEG; }
         updateDial(drag.acc);
-      } else {
-        drag.acc += drag.lastY - e.clientY;
-        drag.lastY = e.clientY;
-        while (drag.acc >= SLIDE_PX) { step(1); drag.acc -= SLIDE_PX; }
-        while (drag.acc <= -SLIDE_PX) { step(-1); drag.acc += SLIDE_PX; }
-        updateDial((drag.acc / SLIDE_PX) * DEG);
       }
     });
 
