@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bot100 Log</title>
+  <meta name="description" content="VALORANT 射撃場 Bot100体撃ちのタイム記録・分析">
+  <meta name="theme-color" content="#F1ECD9">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%2343603F'/><circle cx='50' cy='50' r='28' fill='none' stroke='%23F1ECD9' stroke-width='8'/><circle cx='50' cy='50' r='8' fill='%23F1ECD9'/></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;800&family=IBM+Plex+Mono:wght@400;500&family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <header class="app-header">
+    <div class="header-top">
+      <h1 class="wordmark">BOT<span>100</span><small>range log</small></h1>
+      <nav class="tabs" role="tablist">
+        <button class="tab active" data-tab="record" role="tab">記録</button>
+        <button class="tab" data-tab="stats" role="tab">集計</button>
+        <button class="tab" data-tab="history" role="tab">履歴</button>
+        <button class="tab" data-tab="settings" role="tab">設定</button>
+      </nav>
+    </div>
+    <div class="mode-bar" id="mode-bar" role="radiogroup" aria-label="モード">
+      <div class="mode-group main">
+        <span class="mode-group-label">100体（タイム）</span>
+        <div class="mode-buttons">
+          <button class="mode-btn" data-mode="b100_static">移動なし</button>
+          <button class="mode-btn" data-mode="b100_strafe">移動あり</button>
+        </div>
+      </div>
+      <div class="mode-group">
+        <span class="mode-group-label">30秒（撃破数）</span>
+        <div class="mode-buttons">
+          <button class="mode-btn" data-mode="k30_easy">Easy</button>
+          <button class="mode-btn" data-mode="k30_medium">Medium</button>
+          <button class="mode-btn" data-mode="k30_hard">Hard</button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <!-- 記録タブ -->
+    <section id="tab-record" class="tab-panel active">
+      <div class="card">
+        <h2 class="eyebrow-title"><span class="eyebrow">記録</span><span class="js-mode-label"></span></h2>
+        <form id="record-form" class="record-form" autocomplete="off">
+          <div class="record-dial">
+            <div class="stepper">
+              <button type="button" class="step-btn" data-step="-1" aria-label="1減らす">−</button>
+              <div class="dial">
+                <svg id="dial-ticks" class="dial-ticks" viewBox="0 0 200 200" aria-hidden="true"></svg>
+                <span class="dial-marker" aria-hidden="true"></span>
+                <div class="stepper-value">
+                  <input id="input-value" type="number" inputmode="numeric" step="1" min="0" required aria-describedby="value-hint">
+                  <span class="js-unit unit"></span>
+                </div>
+              </div>
+              <button type="button" class="step-btn" data-step="1" aria-label="1増やす">＋</button>
+            </div>
+            <p id="value-hint" class="hint center"><span class="js-value-hint"></span><br>数字の上でホイールを回すと ±1</p>
+          </div>
+
+          <div class="record-fields">
+            <label class="field">
+              <span>日付</span>
+              <input id="input-date" type="date" required>
+            </label>
+            <div class="field">
+              <span>武器・スキン（任意）</span>
+              <button type="button" id="loadout-btn" class="loadout">
+                <span class="loadout-case"><img id="loadout-img" class="loadout-img" alt="" hidden></span>
+                <span id="loadout-text" class="loadout-text">未選択</span>
+                <span class="loadout-change">変更</span>
+              </button>
+            </div>
+            <button type="submit" class="btn primary wide">記録する</button>
+          </div>
+        </form>
+      </div>
+
+      <div id="pb-banner" class="pb-banner" hidden></div>
+
+      <div class="card">
+        <h2>今日のサマリー <small id="today-label"></small></h2>
+        <div class="kpis">
+          <div class="kpi"><span class="kpi-label">回数</span><span id="today-count" class="kpi-value">0</span></div>
+          <div class="kpi"><span class="kpi-label">平均</span><span id="today-avg" class="kpi-value">-</span></div>
+          <div class="kpi"><span class="kpi-label">ベスト</span><span id="today-best" class="kpi-value accent">-</span></div>
+          <div class="kpi"><span class="kpi-label">前回練習日比(平均)</span><span id="today-diff" class="kpi-value">-</span></div>
+        </div>
+        <ul id="today-list" class="attempt-list"></ul>
+      </div>
+    </section>
+
+    <!-- 集計タブ -->
+    <section id="tab-stats" class="tab-panel">
+      <div class="card">
+        <h2><span class="js-mode-label"></span> のサマリー</h2>
+        <div class="kpis">
+          <div class="kpi"><span class="kpi-label">自己ベスト</span><span id="all-pb" class="kpi-value accent">-</span></div>
+          <div class="kpi"><span class="kpi-label">総試行数</span><span id="all-count" class="kpi-value">0</span></div>
+          <div class="kpi"><span class="kpi-label">練習日数</span><span id="all-days" class="kpi-value">0</span></div>
+          <div class="kpi"><span class="kpi-label">連続練習日数</span><span id="all-streak" class="kpi-value">0</span></div>
+          <div class="kpi"><span class="kpi-label">直近7日 平均</span><span id="recent-avg" class="kpi-value">-</span></div>
+          <div class="kpi"><span class="kpi-label">前7日比</span><span id="recent-diff" class="kpi-value">-</span></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h2>成長グラフ</h2>
+          <div class="filters">
+            <select id="filter-range" aria-label="期間">
+              <option value="7">7日</option>
+              <option value="30" selected>30日</option>
+              <option value="90">90日</option>
+              <option value="all">全期間</option>
+            </select>
+          </div>
+        </div>
+        <div class="chart-wrap"><canvas id="trend-chart"></canvas></div>
+        <p class="hint">折れ線: 日別平均 / 日別ベスト / 7日移動平均・棒: 試行回数。グラフは上に行くほど良い記録です。</p>
+      </div>
+
+      <div class="card">
+        <h2>分布</h2>
+        <div class="chart-wrap small"><canvas id="dist-chart"></canvas></div>
+      </div>
+
+      <div class="card">
+        <h2>武器・スキン別</h2>
+        <div class="table-wrap">
+          <table class="history">
+            <thead><tr><th>武器 / スキン</th><th>回数</th><th>平均</th><th>ベスト</th></tr></thead>
+            <tbody id="setup-body"></tbody>
+          </table>
+        </div>
+        <p id="setup-empty" class="empty">データがありません</p>
+      </div>
+
+      <div class="card">
+        <h2>練習カレンダー（全モード）</h2>
+        <div id="heatmap" class="heatmap"></div>
+        <p class="hint">色が濃いほどその日の試行回数が多い</p>
+      </div>
+    </section>
+
+    <!-- 履歴タブ -->
+    <section id="tab-history" class="tab-panel">
+      <div class="card">
+        <h2><span class="js-mode-label"></span> の日別履歴</h2>
+        <div class="table-wrap">
+          <table class="history">
+            <thead>
+              <tr><th>日付</th><th>回数</th><th>平均</th><th>ベスト</th><th>ワースト</th><th></th></tr>
+            </thead>
+            <tbody id="history-body"></tbody>
+          </table>
+        </div>
+        <p id="history-empty" class="empty">まだ記録がありません</p>
+      </div>
+    </section>
+
+    <!-- 設定タブ -->
+    <section id="tab-settings" class="tab-panel">
+      <div class="card">
+        <h2><span class="js-mode-label"></span> の目標</h2>
+        <div class="row">
+          <label class="field grow">
+            <span>目標（<span class="js-unit"></span>）グラフに目標ラインを表示。空欄で解除</span>
+            <input id="goal-input" type="number" step="1" min="0">
+          </label>
+          <button id="goal-save" class="btn">保存</button>
+        </div>
+        <p id="goal-progress" class="hint"></p>
+      </div>
+
+      <div class="card">
+        <h2>データ管理</h2>
+        <p class="hint">データはこのブラウザ（localStorage）にのみ保存されます。端末移行やバックアップには書き出しを使ってください。</p>
+        <div class="btn-row">
+          <button id="export-json" class="btn">JSON 書き出し</button>
+          <button id="export-csv" class="btn">CSV 書き出し</button>
+          <label class="btn">
+            JSON 読み込み
+            <input id="import-json" type="file" accept="application/json,.json" hidden>
+          </label>
+          <button id="clear-all" class="btn danger">全データ削除</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="picker" class="picker" aria-labelledby="picker-title">
+    <div class="picker-head">
+      <h3 id="picker-title">武器・スキンを選択</h3>
+      <button type="button" id="picker-close" class="del" aria-label="閉じる">✕</button>
+    </div>
+    <p id="picker-status" class="hint" hidden></p>
+    <div id="weapon-grid" class="weapon-grid"></div>
+    <div id="skin-section" class="skin-section" hidden>
+      <input id="skin-search" type="search" placeholder="スキン名で検索">
+      <div id="skin-grid" class="skin-grid"></div>
+    </div>
+    <div class="picker-foot">
+      <button type="button" id="picker-clear" class="btn ghost">武器なしにする</button>
+      <button type="button" id="picker-done" class="btn primary">決定</button>
+    </div>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
