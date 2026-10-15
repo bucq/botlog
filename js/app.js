@@ -1,7 +1,9 @@
 (() => {
   'use strict';
 
-  const STORAGE_KEY = 'bot100log:v1';
+  const GUEST_KEY = 'bot100log:v1';
+  const userKey = id => `bot100log:user:${id}`;
+  const cloud = window.BotlogCloud;
 
   // better: 'low' = 小さいほど良い（タイム）, 'high' = 大きいほど良い（撃破数）
   const MODES = {
@@ -13,21 +15,29 @@
   };
 
   // ---------- State ----------
+  // ゲストは GUEST_KEY、ログイン中はユーザーごとのキーに保存する（オフライン時のキャッシュ兼、未送信分の置き場）
+  let storageKey = GUEST_KEY;
   let state = load();
   let trendChart = null;
   let distChart = null;
+  let rankChart = null;
+
+  // account: ログイン中なら { id, profile }
+  let account = null;
+  const sync = { running: false, again: false, error: '', lastAt: 0 };
 
   function defaultState() {
     return {
-      version: 2,
+      version: 3,
       records: [],
+      deleted: [], // ログイン中に削除し、まだサーバーへ反映していない id
       settings: { mode: 'b100_static', goals: {}, lastWeaponId: '', lastSkinId: '' },
     };
   }
 
-  function load() {
+  function load(key = storageKey) {
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
+      const raw = localStorage.getItem(key);
       if (!raw) return defaultState();
       return normalize(JSON.parse(raw));
     } catch {
@@ -37,7 +47,7 @@
 
   function save() {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      localStorage.setItem(storageKey, JSON.stringify(state));
     } catch {
       toast('保存に失敗しました（ストレージ容量またはプライベートモード）');
     }
@@ -59,8 +69,10 @@
         skinId: typeof r.skinId === 'string' ? r.skinId : '',
         skin: typeof r.skin === 'string' ? r.skin : '',
         createdAt: r.createdAt || new Date().toISOString(),
+        synced: r.synced === true, // サーバーに保存済みか
       }))
       .filter(r => /^\d{4}-\d{2}-\d{2}$/.test(r.date) && Number.isFinite(r.value));
+    if (Array.isArray(data.deleted)) base.deleted = data.deleted.map(String);
     const s = data.settings || {};
     if (MODES[s.mode]) base.settings.mode = s.mode;
     if (s.goals && typeof s.goals === 'object') base.settings.goals = { ...s.goals };
@@ -351,6 +363,7 @@
     $('#pb-banner').hidden = true;
     applyModeUi();
     renderAll();
+    if (activeTab === 'ranking') renderRanking();
   }
 
   // ---------- Record tab ----------
@@ -434,8 +447,10 @@
       value,
       ...currentLoadout(),
       createdAt: new Date().toISOString(),
+      synced: false,
     });
     save();
+    requestSync();
 
     const banner = $('#pb-banner');
     if (prevBest !== null && isBetter(value, prevBest)) {
@@ -455,8 +470,11 @@
     const m = MODES[r.mode];
     if (!confirm(`${r.date} の ${m.label} ${r.value}${m.unit} を削除しますか？`)) return;
     state.records = state.records.filter(x => x.id !== id);
+    // 送信中の記録を消した場合もサーバー側を確実に消すため、ログイン中は常に削除予定へ積む
+    if (account) state.deleted.push(id);
     save();
     renderAll();
+    requestSync();
   }
 
   // ---------- Stats tab ----------
@@ -675,6 +693,7 @@
     }
     save();
     renderAll();
+    pushGoals();
   }
 
   function download(filename, content, type) {
@@ -687,7 +706,12 @@
   }
 
   function exportJson() {
-    download(`bot100log-${today()}.json`, JSON.stringify(state, null, 2), 'application/json');
+    const data = {
+      version: state.version,
+      records: state.records.map(({ synced, ...r }) => r),
+      settings: state.settings,
+    };
+    download(`bot100log-${today()}.json`, JSON.stringify(data, null, 2), 'application/json');
   }
 
   function exportCsv() {
@@ -713,25 +737,341 @@
       }
       if (!confirm(`${incoming.records.length} 件の記録を既存データとマージします（重複は除外）。よろしいですか？`)) return;
       const ids = new Set(state.records.map(r => r.id));
-      const added = incoming.records.filter(r => !ids.has(r.id));
+      const added = incoming.records.filter(r => !ids.has(r.id)).map(r => ({ ...r, synced: false }));
       state.records.push(...added);
       state.settings.goals = { ...incoming.settings.goals, ...state.settings.goals };
       save();
       applyModeUi();
       renderAll();
       toast(`${added.length} 件を追加しました`);
+      requestSync();
+      pushGoals();
     });
   }
 
   function clearAll() {
     if (!state.records.length) return;
-    if (!confirm('全モードの記録を削除します。元に戻せません。\n（事前に JSON 書き出しを推奨）')) return;
+    const where = account ? 'アカウントに保存された全モードの記録' : 'このブラウザに保存された全モードの記録';
+    if (!confirm(`${where}を削除します。元に戻せません。\n（事前に JSON 書き出しを推奨）`)) return;
     if (!confirm('本当に削除しますか？')) return;
-    state = defaultState();
+    const deleted = account ? [...state.deleted, ...state.records.map(r => r.id)] : [];
+    state = { ...defaultState(), deleted };
     save();
     applyModeUi();
     renderAll();
     toast('全データを削除しました');
+    requestSync();
+  }
+
+  // ---------- Account / Sync ----------
+  const safeUrl = u => (typeof u === 'string' && u.startsWith('https://') ? escapeHtml(u) : '');
+
+  async function login() {
+    try {
+      const { error } = await cloud.signIn();
+      if (error) throw error;
+    } catch (e) {
+      toast(`ログインを開始できませんでした: ${e.message}`);
+    }
+  }
+
+  async function logout() {
+    if (state.records.some(r => !r.synced) || state.deleted.length) {
+      if (!confirm('まだアカウントに送信していない変更があります。ログアウトするとこの端末で同期されるまで保留になります。ログアウトしますか？')) return;
+    }
+    try {
+      await cloud.signOut();
+    } catch (e) {
+      toast(`ログアウトに失敗しました: ${e.message}`);
+    }
+  }
+
+  // ログイン状態の変化（ページ読み込み時の復元・ログイン・ログアウト）
+  async function onAuth(user) {
+    if ((user?.id || null) === (account?.id || null)) return;
+    if (!user) {
+      account = null;
+      switchStorage(GUEST_KEY);
+      toast('ログアウトしました');
+      return;
+    }
+    account = { id: user.id, profile: null };
+    switchStorage(userKey(user.id));
+    try {
+      account.profile = await cloud.getProfile(user.id);
+    } catch (e) {
+      sync.error = `プロフィールを取得できませんでした: ${e.message}`;
+    }
+    offerGuestImport(user.id);
+    await applyRemoteGoals();
+    renderAccount();
+    await runSync();
+  }
+
+  function switchStorage(key) {
+    storageKey = key;
+    state = load();
+    loadout.weaponId = state.settings.lastWeaponId;
+    loadout.skinId = state.settings.lastSkinId;
+    rankingCache = null;
+    applyModeUi();
+    renderLoadoutButton();
+    renderAccount();
+    renderAll();
+    if (activeTab === 'ranking') renderRanking();
+  }
+
+  // ゲストで付けていた記録をアカウントへ移す（アカウントごとに一度だけ確認）
+  function offerGuestImport(userId) {
+    const askedKey = `bot100log:import-asked:${userId}`;
+    let asked = false;
+    try { asked = localStorage.getItem(askedKey) === '1'; } catch { /* ignore */ }
+    const guest = load(GUEST_KEY);
+    if (asked || !guest.records.length) return;
+    try { localStorage.setItem(askedKey, '1'); } catch { /* ignore */ }
+    if (!confirm(`この端末にログイン前の記録が ${guest.records.length} 件あります。アカウントに取り込みますか？`)) return;
+    const ids = new Set(state.records.map(r => r.id));
+    state.records.push(...guest.records.filter(r => !ids.has(r.id)).map(r => ({ ...r, synced: false })));
+    state.settings.goals = { ...guest.settings.goals, ...state.settings.goals };
+    save();
+    // 取り込んだ分はゲスト側から消し、二重に取り込まれないようにする
+    try { localStorage.setItem(GUEST_KEY, JSON.stringify({ ...guest, records: [] })); } catch { /* ignore */ }
+    renderAll();
+  }
+
+  async function applyRemoteGoals() {
+    const remote = account?.profile?.goals || {};
+    if (Object.keys(remote).length) {
+      state.settings.goals = { ...remote };
+      save();
+      renderAll();
+    } else if (Object.keys(state.settings.goals).length) {
+      await pushGoals();
+    }
+  }
+
+  async function pushGoals() {
+    if (!account) return;
+    try {
+      account.profile = await cloud.updateProfile(account.id, { goals: state.settings.goals });
+    } catch (e) {
+      toast(`目標をアカウントに保存できませんでした: ${e.message}`);
+    }
+  }
+
+  function requestSync() {
+    if (account) runSync();
+  }
+
+  // 未送信の追加・削除を送ってから、サーバーの記録で手元を置き換える
+  async function runSync() {
+    if (!account) return;
+    if (sync.running) { sync.again = true; return; }
+    if (!navigator.onLine) { sync.error = 'オフラインです。接続が戻ると自動で同期します'; renderSyncStatus(); return; }
+    sync.running = true;
+    renderSyncStatus();
+    const key = storageKey;
+    try {
+      const deleting = [...new Set(state.deleted)];
+      if (deleting.length) {
+        await cloud.deleteRecords(account.id, deleting);
+        state.deleted = state.deleted.filter(id => !deleting.includes(id));
+      }
+      const pending = state.records.filter(r => !r.synced);
+      if (pending.length) {
+        await cloud.upsertRecords(pending);
+        pending.forEach(r => (r.synced = true));
+      }
+      const remote = await cloud.fetchOwnRecords(account.id);
+      if (storageKey !== key) return; // 同期中にアカウントが切り替わった
+      const deleted = new Set(state.deleted);
+      const merged = new Map(remote.filter(r => !deleted.has(r.id)).map(r => [r.id, { ...r, synced: true }]));
+      for (const r of state.records) if (!r.synced) merged.set(r.id, r); // 同期中に追加された分
+      state.records = [...merged.values()];
+      save();
+      sync.error = '';
+      sync.lastAt = Date.now();
+      renderAll();
+    } catch (e) {
+      sync.error = `同期に失敗しました: ${e.message}`;
+      save();
+    } finally {
+      sync.running = false;
+      renderSyncStatus();
+      if (sync.again) { sync.again = false; runSync(); }
+    }
+  }
+
+  function pendingCount() {
+    return state.records.filter(r => !r.synced).length + state.deleted.length;
+  }
+
+  function renderSyncStatus() {
+    if (!account) return;
+    const el = $('#sync-status');
+    const pending = pendingCount();
+    let text;
+    let cls = '';
+    if (sync.running) text = '同期中…';
+    else if (sync.error) { text = pending ? `${sync.error}（未送信 ${pending} 件）` : sync.error; cls = 'bad'; }
+    else if (pending) { text = `未送信 ${pending} 件`; cls = 'bad'; }
+    else if (sync.lastAt) text = `同期済み ${new Date(sync.lastAt).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })}`;
+    else text = '';
+    el.textContent = text;
+    el.className = `sync-status ${cls}`;
+    $('#account-chip').classList.toggle('has-pending', Boolean(pending || sync.error));
+  }
+
+  function renderAccount() {
+    const on = cloud.configured;
+    $('#account-chip').hidden = !on;
+    $('#account-card').hidden = !on;
+    $('.tab[data-tab="ranking"]').hidden = !on;
+    if (!on) return;
+
+    const p = account?.profile;
+    $('#account-guest').hidden = Boolean(account);
+    $('#account-user').hidden = !account;
+    $('#ranking-guest').hidden = Boolean(account);
+    $('#ranking-body').hidden = !account;
+    $('#data-hint').textContent = account
+      ? '記録はアカウントに保存され、ログインした端末どうしで同期されます。書き出しはバックアップ用です。'
+      : 'データはこのブラウザ（localStorage）にのみ保存されます。端末移行やバックアップには書き出しを使ってください。';
+
+    const chip = $('#account-chip');
+    if (!account) {
+      chip.innerHTML = '<button type="button" class="chip-btn js-login">Discordでログイン</button>';
+      return;
+    }
+    const name = p?.display_name || 'ログイン中';
+    const avatar = safeUrl(p?.avatar_url);
+    chip.innerHTML = `<button type="button" class="chip-btn user" data-goto="settings" title="アカウント設定">
+      ${avatar ? `<img class="avatar" src="${avatar}" alt="" referrerpolicy="no-referrer">` : '<span class="avatar placeholder" aria-hidden="true"></span>'}
+      <span class="chip-name">${escapeHtml(name)}</span><span class="chip-dot" aria-hidden="true"></span>
+    </button>`;
+
+    $('#account-name').textContent = name;
+    const img = $('#account-avatar');
+    img.hidden = !avatar;
+    if (avatar) img.src = p.avatar_url;
+    if (document.activeElement !== $('#display-name-input')) $('#display-name-input').value = p?.display_name || '';
+    $('#public-toggle').checked = p ? p.is_public : true;
+    $('#public-toggle').disabled = !p;
+    renderSyncStatus();
+  }
+
+  async function saveDisplayName() {
+    const name = $('#display-name-input').value.trim();
+    if (!name || name.length > 32) {
+      toast('表示名は1〜32文字で入力してください');
+      return;
+    }
+    try {
+      account.profile = await cloud.updateProfile(account.id, { display_name: name });
+      rankingCache = null;
+      renderAccount();
+      toast('表示名を変更しました');
+    } catch (e) {
+      toast(`表示名を変更できませんでした: ${e.message}`);
+    }
+  }
+
+  async function savePublic() {
+    const toggle = $('#public-toggle');
+    try {
+      account.profile = await cloud.updateProfile(account.id, { is_public: toggle.checked });
+      rankingCache = null;
+      toast(toggle.checked ? 'ランキングに公開しました' : '非公開にしました');
+    } catch (e) {
+      toggle.checked = !toggle.checked;
+      toast(`公開設定を変更できませんでした: ${e.message}`);
+    }
+  }
+
+  // ---------- Ranking tab ----------
+  let rankingCache = null; // { mode, rows }
+
+  async function renderRanking(force = false) {
+    if (!account) return;
+    const m = mode();
+    const key = state.settings.mode;
+    const status = $('#ranking-status');
+    $('#ranking-private').hidden = account.profile?.is_public !== false;
+    if (force || rankingCache?.mode !== key) {
+      status.hidden = false;
+      status.textContent = '読み込み中…';
+      $('#ranking-tbody').innerHTML = '';
+      try {
+        const rows = await cloud.fetchLeaderboard(key, m.better);
+        if (state.settings.mode !== key) return; // 読み込み中にモードが変わった
+        rankingCache = { mode: key, rows };
+      } catch (e) {
+        status.textContent = `ランキングを読み込めませんでした: ${e.message}`;
+        return;
+      }
+    }
+    const rows = rankingCache.rows;
+    status.hidden = rows.length > 0;
+    status.textContent = 'このモードの公開記録はまだありません。最初の記録を付けてみましょう。';
+    let rank = 0;
+    let prev = null;
+    $('#ranking-tbody').innerHTML = rows
+      .map((r, i) => {
+        if (r.best !== prev) { rank = i + 1; prev = r.best; } // 同タイムは同順位
+        const avatar = safeUrl(r.avatar_url);
+        const me = r.user_id === account.id;
+        return `<tr class="rank-row ${me ? 'me' : ''}" data-user="${escapeHtml(r.user_id)}" data-name="${escapeHtml(r.display_name)}">
+          <td class="rank">${rank}</td>
+          <td><span class="player">${avatar ? `<img class="avatar" src="${avatar}" alt="" referrerpolicy="no-referrer" loading="lazy">` : '<span class="avatar placeholder" aria-hidden="true"></span>'}${escapeHtml(r.display_name)}${me ? '<span class="me-tag">あなた</span>' : ''}</span></td>
+          <td class="best">${r.best}${m.unit}</td>
+          <td>${r.recent_avg == null ? '-' : `${Number(r.recent_avg).toFixed(1)}${m.unit}`}</td>
+          <td>${r.attempts}</td>
+          <td class="date">${r.last_date}</td>
+        </tr>`;
+      })
+      .join('');
+  }
+
+  async function toggleRankDetail(row) {
+    const next = row.nextElementSibling;
+    if (next?.classList.contains('rank-detail')) {
+      next.remove();
+      if (rankChart) { rankChart.destroy(); rankChart = null; }
+      return;
+    }
+    $$('.rank-detail').forEach(el => el.remove());
+    if (rankChart) { rankChart.destroy(); rankChart = null; }
+    const detail = document.createElement('tr');
+    detail.className = 'rank-detail';
+    detail.innerHTML = `<td colspan="6"><p class="hint">読み込み中…</p><div class="chart-wrap small" hidden><canvas></canvas></div></td>`;
+    row.after(detail);
+    const m = mode();
+    try {
+      const recs = await cloud.fetchUserRecords(row.dataset.user, state.settings.mode);
+      if (!detail.isConnected) return;
+      const days = groupByDate(recs);
+      detail.querySelector('.hint').textContent = `${row.dataset.name} さんの日別記録（${days.length} 日・${recs.length} 回）`;
+      const wrap = detail.querySelector('.chart-wrap');
+      wrap.hidden = false;
+      rankChart = new Chart(wrap.querySelector('canvas'), {
+        type: 'line',
+        data: {
+          labels: days.map(d => d.date.slice(5)),
+          datasets: [
+            { label: '平均', data: days.map(d => +d.avg.toFixed(1)), borderColor: '#43603F', backgroundColor: '#43603F', borderWidth: 2.5, pointRadius: 2.5, tension: 0.25 },
+            { label: 'ベスト', data: days.map(d => d.best), borderColor: '#B5861A', backgroundColor: '#B5861A', borderWidth: 2, pointRadius: 2, tension: 0.25 },
+          ],
+        },
+        options: {
+          maintainAspectRatio: false,
+          interaction: { mode: 'index', intersect: false },
+          plugins: { legend: { labels: { boxWidth: 12 } }, tooltip: { callbacks: { label: ctx => ` ${ctx.dataset.label}: ${ctx.raw}${m.unit}` } } },
+          scales: { y: { reverse: m.better === 'low', ticks: { precision: 0 }, title: { display: true, text: m.unit } } },
+        },
+      });
+    } catch (e) {
+      detail.querySelector('.hint').textContent = `記録を読み込めませんでした: ${e.message}`;
+    }
   }
 
   // ---------- Wiring ----------
@@ -743,6 +1083,7 @@
     $$('.tab-panel').forEach(p => p.classList.toggle('active', p.id === `tab-${name}`));
     try { sessionStorage.setItem('bot100log:tab', name); } catch { /* ignore */ }
     if (name === 'stats') renderStats(); // canvas は表示状態で描画する必要がある
+    if (name === 'ranking') renderRanking();
   }
 
   function renderAll() {
@@ -796,6 +1137,11 @@
     $('#filter-range').addEventListener('change', () => { renderTrendChart(); renderDistChart(); });
 
     document.body.addEventListener('click', e => {
+      if (e.target.closest('.js-login')) return login();
+      const go = e.target.closest('[data-goto]');
+      if (go) return switchTab(go.dataset.goto);
+      const rankRow = e.target.closest('tr.rank-row');
+      if (rankRow) return toggleRankDetail(rankRow);
       const del = e.target.closest('.del');
       if (del) {
         e.stopPropagation();
@@ -816,22 +1162,33 @@
     $('#import-json').addEventListener('change', importJson);
     $('#clear-all').addEventListener('click', clearAll);
 
+    $('#display-name-save').addEventListener('click', saveDisplayName);
+    $('#display-name-input').addEventListener('keydown', e => { if (e.key === 'Enter') saveDisplayName(); });
+    $('#public-toggle').addEventListener('change', savePublic);
+    $('#sync-now').addEventListener('click', runSync);
+    $('#logout').addEventListener('click', logout);
+    $('#ranking-refresh').addEventListener('click', () => renderRanking(true));
+    window.addEventListener('online', requestSync);
+
     // 日付が変わったときに「今日」を更新
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState !== 'visible') return;
       $('#input-date').value = today();
       renderAll();
+      requestSync(); // 別の端末で付けた記録を取り込む
     });
 
     applyModeUi();
     renderLoadoutButton();
+    renderAccount();
     renderAll();
+    cloud.onAuthChange(onAuth);
     loadCatalog()
       .then(() => { renderLoadoutButton(); renderAll(); })
       .catch(() => toast('武器データを取得できませんでした'));
     let saved = null;
     try { saved = sessionStorage.getItem('bot100log:tab'); } catch { /* ignore */ }
-    if (saved && document.getElementById(`tab-${saved}`)) switchTab(saved);
+    if (saved && document.getElementById(`tab-${saved}`) && !$(`.tab[data-tab="${saved}"]`)?.hidden) switchTab(saved);
   }
 
   init();

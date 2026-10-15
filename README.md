@@ -19,16 +19,36 @@ VALORANT 射撃場の「Bot 100体撃ち」のタイムを記録・分析する�
 - **履歴**: 日別一覧（クリックで各試行を展開・削除）
 - **目標**: モードごとに設定
 - **データ管理**: JSON 書き出し／読み込み（マージ）、CSV 書き出し
+- **アカウント（Discord ログイン）**: 記録をアカウントに保存して端末間で同期。オフライン中の記録は次回接続時に送信
+- **ランキング**: 公開ユーザー同士でモード別ベストを比較。行をクリックで相手の成長グラフ。設定で非公開にできる
 
-データはブラウザの localStorage に保存されます。端末やブラウザを変える場合は JSON 書き出し → 読み込みで移行してください。
+ログインしなくても使えます（ゲスト）。その場合データはこのブラウザの localStorage にのみ保存され、ログイン時にアカウントへ取り込めます。
 
 ## 構成
 
 ```
 index.html
 css/style.css
-js/app.js      # 依存: Chart.js (cdnjs), valorant-api.com
+js/app.js      # 画面・集計（依存: Chart.js, valorant-api.com）
+js/cloud.js    # Supabase との通信（認証・同期・ランキング）
+js/config.js   # Supabase の URL / Publishable key
+supabase/schema.sql  # テーブル・RLS・ランキング用ビュー
 ```
+
+## アカウント機能のセットアップ（Supabase + Discord）
+
+`js/config.js` が空のままならログイン機能は表示されず、ゲスト専用で動きます。
+
+1. **Supabase プロジェクト作成**: https://supabase.com でプロジェクトを作る（無料プランで可）
+2. **スキーマ作成**: ダッシュボード → SQL Editor に `supabase/schema.sql` の中身を貼って Run
+3. **Discord アプリ作成**: https://discord.com/developers/applications → New Application → OAuth2
+   - Redirects に `https://<プロジェクトID>.supabase.co/auth/v1/callback` を追加
+   - Client ID と Client Secret を控える
+4. **Supabase で Discord を有効化**: Authentication → Sign In / Providers → Discord を ON、Client ID / Secret を入力
+5. **リダイレクト先の許可**: Authentication → URL Configuration
+   - Site URL: `https://bucq.github.io/botlog/`
+   - Redirect URLs: `https://bucq.github.io/botlog/` と `http://localhost:8000/`
+6. **接続設定**: Project Settings → API Keys の Project URL と Publishable key を `js/config.js` に記入（公開して問題ないキー。他人のデータは RLS で保護）
 
 ## ローカルで確認
 

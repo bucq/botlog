@@ -54,7 +54,9 @@ body {
   align-items: flex-end;
   justify-content: space-between;
   gap: 12px;
+  position: relative;
 }
+.header-top .wordmark { margin-right: auto; }
 
 .wordmark {
   margin: 0 0 10px;
@@ -578,6 +580,115 @@ table.history .toggle { color: var(--moss); }
 }
 .skin-grid .pick img { height: 58px; }
 
+/* ---------- アカウント ---------- */
+.account-chip { align-self: center; margin-bottom: 6px; }
+.chip-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--paper);
+  border: 1px solid var(--sage);
+  border-radius: 999px;
+  padding: 5px 12px;
+  color: var(--forest);
+  font-family: var(--font-body);
+  font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.chip-btn:hover { border-color: var(--moss); }
+.chip-btn.user { padding: 3px 12px 3px 3px; font-weight: 500; }
+.chip-name { max-width: 9em; overflow: hidden; text-overflow: ellipsis; }
+.chip-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--moss); }
+.account-chip.has-pending .chip-dot { background: var(--rust); }
+
+.avatar {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+  background: var(--sage-soft);
+}
+.avatar.placeholder { display: inline-block; border: 1px solid var(--sage); }
+.avatar.lg { width: 56px; height: 56px; }
+
+.lead { margin: 0 0 14px; font-size: 0.92rem; }
+.account-head { display: flex; align-items: center; gap: 14px; margin-bottom: 16px; }
+.account-name { font-weight: 700; font-size: 1.1rem; }
+.sync-status { font-family: var(--font-mono); font-size: 0.75rem; color: var(--muted); }
+.sync-status.bad { color: var(--rust); }
+#account-user .row { margin-bottom: 14px; }
+#account-user .btn-row { margin-top: 16px; }
+
+/* トグルスイッチ */
+.switch { display: flex; align-items: flex-start; gap: 12px; cursor: pointer; }
+.switch input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.switch-track {
+  position: relative;
+  flex-shrink: 0;
+  width: 42px;
+  height: 24px;
+  margin-top: 1px;
+  border-radius: 999px;
+  background: var(--sage);
+  transition: background-color 0.15s;
+}
+.switch-track::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--paper);
+  transition: transform 0.15s;
+}
+.switch input:checked + .switch-track { background: var(--moss); }
+.switch input:checked + .switch-track::after { transform: translateX(18px); }
+.switch input:focus-visible + .switch-track { outline: 2px solid var(--moss); outline-offset: 2px; }
+.switch input:disabled + .switch-track { opacity: 0.5; }
+.switch small { display: block; color: var(--muted); font-size: 0.75rem; }
+
+.btn.small { padding: 6px 12px; font-size: 0.82rem; }
+.empty-cta { text-align: center; padding: 20px 0 8px; }
+.empty-cta p { margin: 0 0 14px; color: var(--muted); }
+.notice {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-left: 4px solid var(--ochre);
+  background: var(--sage-soft);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  font-size: 0.85rem;
+}
+
+/* ランキング */
+table.ranking tr.rank-row { cursor: pointer; }
+table.ranking tr.rank-row:hover { background: var(--sage-soft); }
+table.ranking tr.me { background: color-mix(in srgb, var(--moss) 9%, transparent); }
+table.ranking td.rank {
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 1.3rem;
+  width: 3em;
+}
+table.ranking tr.rank-row:nth-child(1) td.rank { color: var(--ochre); }
+table.ranking td.best { font-family: var(--font-display); font-weight: 800; font-size: 1.2rem; }
+table.ranking td.date { font-family: var(--font-mono); font-size: 0.8rem; color: var(--muted); }
+table.ranking th:nth-child(2), table.ranking td:nth-child(2) { text-align: left; }
+.player { display: inline-flex; align-items: center; gap: 10px; }
+.me-tag {
+  font-family: var(--font-mono);
+  font-size: 0.64rem;
+  color: var(--cream);
+  background: var(--moss);
+  border-radius: 4px;
+  padding: 1px 6px;
+}
+table.ranking tr.rank-detail td { text-align: left; background: var(--cream); padding: 10px 12px 14px; }
+
 /* ---------- Toast ---------- */
 .toast {
   position: fixed;
@@ -598,6 +709,9 @@ table.history .toggle { color: var(--moss); }
 /* ---------- Mobile ---------- */
 @media (max-width: 600px) {
   .app-header { position: static; }
+  .account-chip { position: absolute; top: 12px; right: 16px; margin: 0; }
+  table.ranking tr > :nth-child(4), table.ranking tr > :nth-child(6) { display: none; }
+  table.ranking tr.rank-detail > td { display: table-cell; }
   .header-top { flex-direction: column; align-items: flex-start; gap: 4px; padding-top: 12px; }
   .wordmark { margin-bottom: 2px; }
   .tabs { width: 100%; }
