@@ -428,9 +428,101 @@
     $('#dial-ticks').innerHTML = lines.join('');
   }
 
-  function updateDial() {
+  // 値が増えると時計回り。extra はドラッグ中に指へ追従させる端数の角度
+  function updateDial(extra = 0) {
     const v = parseInt($('#input-value').value, 10);
-    $('#dial-ticks').style.transform = `rotate(${-(Number.isFinite(v) ? v : 0) * 6}deg)`;
+    $('#dial-ticks').style.transform = `rotate(${(Number.isFinite(v) ? v : 0) * 6 + extra}deg)`;
+  }
+
+  // ダイヤルのドラッグ操作
+  //  - 外側のリングから始めた場合: 円に沿ってなぞると回る（6°で ±1、時計回りで増加）
+  //  - 中央の数字から始めた場合: 上下スワイプ（上で増加）
+  //  - 動かさずに離した場合: 数字を直接入力
+  function setupDialDrag() {
+    const dial = $('.dial');
+    const input = $('#input-value');
+    const SLIDE_PX = 14; // 上下スワイプで ±1 に必要な距離
+    const DEG = 6;
+    let drag = null;
+    let suppressClick = false;
+
+    const angleAt = (e, c) => (Math.atan2(e.clientY - c.y, e.clientX - c.x) * 180) / Math.PI;
+    const step = delta => {
+      const before = input.value;
+      stepValue(delta);
+      if (input.value !== before && navigator.vibrate) navigator.vibrate(4);
+    };
+
+    dial.addEventListener('pointerdown', e => {
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      const rect = dial.getBoundingClientRect();
+      const c = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+      const dist = Math.hypot(e.clientX - c.x, e.clientY - c.y);
+      drag = {
+        id: e.pointerId,
+        c,
+        kind: dist > (rect.width / 2) * 0.6 ? 'rotate' : 'slide',
+        startX: e.clientX,
+        startY: e.clientY,
+        lastAngle: angleAt(e, c),
+        lastY: e.clientY,
+        acc: 0,
+        moved: false,
+      };
+      // タッチでは入力欄のフォーカス（キーボード表示）を止め、タップ判定は pointerup で行う
+      if (e.pointerType !== 'mouse') e.preventDefault();
+      try { dial.setPointerCapture(e.pointerId); } catch { /* 合成イベントなどでは捕捉できない */ }
+    });
+
+    dial.addEventListener('pointermove', e => {
+      if (!drag || e.pointerId !== drag.id) return;
+      if (!drag.moved) {
+        if (Math.hypot(e.clientX - drag.startX, e.clientY - drag.startY) < 6) return;
+        drag.moved = true;
+        dial.classList.add('dragging');
+        input.blur();
+      }
+      if (drag.kind === 'rotate') {
+        const a = angleAt(e, drag.c);
+        let d = a - drag.lastAngle;
+        if (d > 180) d -= 360;
+        if (d < -180) d += 360;
+        drag.lastAngle = a;
+        drag.acc += d; // 画面座標では角度の増加 = 時計回り
+        // ポインター座標は float32 のため、ちょうど境界の回転が取りこぼされないよう 0.01° の余裕を持たせる
+        while (drag.acc >= DEG - 0.01) { step(1); drag.acc -= DEG; }
+        while (drag.acc <= -DEG + 0.01) { step(-1); drag.acc += DEG; }
+        updateDial(drag.acc);
+      } else {
+        drag.acc += drag.lastY - e.clientY;
+        drag.lastY = e.clientY;
+        while (drag.acc >= SLIDE_PX) { step(1); drag.acc -= SLIDE_PX; }
+        while (drag.acc <= -SLIDE_PX) { step(-1); drag.acc += SLIDE_PX; }
+        updateDial((drag.acc / SLIDE_PX) * DEG);
+      }
+    });
+
+    const end = e => {
+      if (!drag || e.pointerId !== drag.id) return;
+      const tapped = !drag.moved && e.type === 'pointerup';
+      suppressClick = drag.moved;
+      drag = null;
+      dial.classList.remove('dragging');
+      updateDial();
+      if (tapped && e.pointerType !== 'mouse') {
+        input.focus();
+        input.select();
+      }
+    };
+    dial.addEventListener('pointerup', end);
+    dial.addEventListener('pointercancel', end);
+    // ドラッグ直後のクリックで入力欄にフォーカスが移らないようにする
+    dial.addEventListener('click', e => {
+      if (!suppressClick) return;
+      suppressClick = false;
+      e.preventDefault();
+      e.stopPropagation();
+    }, true);
   }
 
   function addRecord(e) {
@@ -1108,7 +1200,8 @@
     $$('.mode-btn').forEach(b => b.addEventListener('click', () => setMode(b.dataset.mode)));
     $$('.tab').forEach(b => b.addEventListener('click', () => switchTab(b.dataset.tab)));
     buildDial();
-    $('#input-value').addEventListener('input', updateDial);
+    $('#input-value').addEventListener('input', () => updateDial());
+    setupDialDrag();
     $$('.step-btn').forEach(b => b.addEventListener('click', () => stepValue(Number(b.dataset.step))));
     // ホイール上で ±1（上で増加）。トラックパッドの細かいイベントは一定量たまるごとに1ステップ
     let wheelAcc = 0;

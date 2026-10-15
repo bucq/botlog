@@ -231,6 +231,11 @@ input[type="date"] { font-family: var(--font-mono); font-size: 0.95rem; }
 
 .hint { color: var(--muted); font-size: 0.78rem; margin: 10px 0 0; }
 .hint.center { text-align: center; margin: 4px 0 0; }
+.hint-touch { display: none; }
+@media (hover: none) and (pointer: coarse) {
+  .hint-pointer { display: none; }
+  .hint-touch { display: inline; }
+}
 .muted { color: var(--muted); }
 .accent { color: var(--ochre); }
 .good { color: var(--moss); }
@@ -278,8 +283,14 @@ input[type="date"] { font-family: var(--font-mono); font-size: 0.95rem; }
   border: 1px solid var(--sage);
   display: grid;
   place-items: center;
-  cursor: ns-resize;
+  cursor: grab;
+  touch-action: none; /* ダイヤル上のドラッグでページをスクロールさせない */
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
 }
+.dial.dragging { cursor: grabbing; }
+.dial.dragging .dial-ticks { transition: none; } /* 指に遅れず追従させる */
 .dial-ticks {
   position: absolute;
   inset: 0;
